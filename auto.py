@@ -24,73 +24,72 @@ class MouseMapperApp:
     def __init__(self, root):
         self.root = root
         self.root.title("自动化助手 (按键映射 & 图像识别)")
-        self.root.geometry("620x520")  # 扩大高度容纳时间设置
+        self.root.geometry("620x570")  # 扩大高度容纳时间设置
         self.root.resizable(False, False)
         
         # --- 共享事件/状态 ---
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # --- 选项卡控件 ---
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(expand=True, fill='both', padx=2, pady=2)
-        
-        self.tab1 = ttk.Frame(self.notebook)
-        self.tab2 = ttk.Frame(self.notebook)
-        
-        self.notebook.add(self.tab1, text="键盘映射鼠标")
-        self.notebook.add(self.tab2, text="图像识别点击")
+        # 使用统一的容器来代替 Notebook
+        self.main_container = tk.Frame(root)
+        self.main_container.pack(expand=True, fill='both', padx=10, pady=10)
         
         # ==========================================
-        # Tab 1: 键盘映射鼠标长按 (原有功能)
+        # 模块 1: 键盘映射鼠标长按 (原有功能的 UI 移到上半部分)
         # ==========================================
+        kb_section = tk.LabelFrame(self.main_container, text="一. 键盘映射鼠标", font=("Arial", 10, "bold"))
+        kb_section.pack(fill=tk.X, pady=(0, 10), ipady=5)
+
         self.kb_running = False
         self.is_mouse_held = False
         self.kb_listener_thread = None
 
-        tk.Label(self.tab1, text="请输入或录制要绑定的按键", font=("Arial", 11, "bold")).pack(pady=(15, 5))
-        tk.Label(self.tab1, text="(例如: 'a', 'space', 'ctrl+x', 'shift+a')").pack(pady=0)
+        tk.Label(kb_section, text="请输入或录制要绑定的按键 (例如: 'a', 'space', 'ctrl+x')", font=("Arial", 9)).pack(pady=(5, 5))
 
-        hk_frame = tk.Frame(self.tab1)
-        hk_frame.pack(pady=10)
+        hk_frame = tk.Frame(kb_section)
+        hk_frame.pack(pady=5)
         
         self.hotkey_var = tk.StringVar(value="alt+x")
-        self.hotkey_entry = tk.Entry(hk_frame, textvariable=self.hotkey_var, font=("Arial", 11), width=18, justify="center")
+        self.hotkey_entry = tk.Entry(hk_frame, textvariable=self.hotkey_var, font=("Arial", 10), width=18, justify="center")
         self.hotkey_entry.pack(side=tk.LEFT, padx=5)
 
         self.btn_record = tk.Button(hk_frame, text="⏺ 录制", command=self.start_recording)
         self.btn_record.pack(side=tk.LEFT)
 
-        self.kb_status_var = tk.StringVar()
-        self.kb_status_var.set("状态: 未启动")
-        self.kb_status_label = tk.Label(self.tab1, textvariable=self.kb_status_var, fg="gray", font=("Arial", 10))
-        self.kb_status_label.pack(pady=5)
+        kb_frame_btns = tk.Frame(kb_section)
+        kb_frame_btns.pack(pady=(5, 5))
 
-        kb_frame_btns = tk.Frame(self.tab1)
-        kb_frame_btns.pack(pady=(5,10))
-
-        self.kb_btn_start = tk.Button(kb_frame_btns, text="▶ 启动", width=12, bg="#d4edda", command=self.start_kb_mapping)
+        self.kb_btn_start = tk.Button(kb_frame_btns, text="▶ 启动", width=10, bg="#d4edda", command=self.start_kb_mapping)
         self.kb_btn_start.pack(side=tk.LEFT, padx=10)
 
-        self.kb_btn_stop = tk.Button(kb_frame_btns, text="⏹ 停止", width=12, state=tk.DISABLED, bg="#f8d7da", command=self.stop_kb_mapping)
+        self.kb_btn_stop = tk.Button(kb_frame_btns, text="⏹ 停止", width=10, state=tk.DISABLED, bg="#f8d7da", command=self.stop_kb_mapping)
         self.kb_btn_stop.pack(side=tk.LEFT, padx=10)
+
+        self.kb_status_var = tk.StringVar()
+        self.kb_status_var.set("状态: 未启动")
+        self.kb_status_label = tk.Label(kb_section, textvariable=self.kb_status_var, fg="gray", font=("Arial", 9))
+        self.kb_status_label.pack(pady=(0, 5))
         
         # ==========================================
-        # Tab 2: 图像识别点击 (新增框架)
+        # 模块 2: 图像识别点击 (新增框架的 UI 移到下半部分)
         # ==========================================
+        img_section = tk.LabelFrame(self.main_container, text="二. 图像识别点击", font=("Arial", 10, "bold"))
+        img_section.pack(fill=tk.BOTH, expand=True)
+
         self.img_running = False
         self.img_thread = None
         self.target_image_path = ""
         
         # --- 窗口选择控件 ---
-        win_pick_frame = tk.Frame(self.tab2)
-        win_pick_frame.pack(pady=(15, 0))
+        win_pick_frame = tk.Frame(img_section)
+        win_pick_frame.pack(pady=(10, 0))
         tk.Label(win_pick_frame, text="目标窗口:").pack(side=tk.LEFT)
         self.win_combo = ttk.Combobox(win_pick_frame, width=25, state="readonly")
         self.win_combo.pack(side=tk.LEFT, padx=5)
         tk.Button(win_pick_frame, text="刷新", command=self.refresh_windows).pack(side=tk.LEFT)
 
         # --- 区域选择控件 ---
-        roi_frame = tk.Frame(self.tab2)
+        roi_frame = tk.Frame(img_section)
         roi_frame.pack(pady=5)
         tk.Label(roi_frame, text="识别区域:").pack(side=tk.LEFT)
         self.roi_var = tk.StringVar(value="相对窗口 72,123 90x402")
@@ -99,7 +98,7 @@ class MouseMapperApp:
         self.roi_rect = (72, 123, 90, 402) # 设置默认相对窗口区域
 
         # --- 图片选择控件 ---
-        img_pick_frame = tk.Frame(self.tab2)
+        img_pick_frame = tk.Frame(img_section)
         img_pick_frame.pack(pady=(5, 5))
         tk.Label(img_pick_frame, text="状态标志:").pack(side=tk.LEFT)
         
@@ -112,46 +111,46 @@ class MouseMapperApp:
         tk.Entry(img_pick_frame, textvariable=self.img_path_var, width=20, state="readonly").pack(side=tk.LEFT, padx=5)
         tk.Button(img_pick_frame, text="浏览...", command=self.browse_image).pack(side=tk.LEFT)
 
-        # --- 识别检测参数设置 (新增) ---
-        settings_frame = tk.Frame(self.tab2)
+        # --- 识别检测参数设置 ---
+        settings_frame = tk.Frame(img_section)
         settings_frame.pack(pady=5)
         
-        tk.Label(settings_frame, text="常规检测间隔(秒):").pack(side=tk.LEFT)
+        tk.Label(settings_frame, text="常规间隔(秒):").pack(side=tk.LEFT)
         self.detect_interval_var = tk.StringVar(value="0.5")
         tk.Entry(settings_frame, textvariable=self.detect_interval_var, width=5).pack(side=tk.LEFT, padx=3)
         
-        tk.Label(settings_frame, text="全放出后轮换间隔(秒):").pack(side=tk.LEFT, padx=(15, 0))
+        tk.Label(settings_frame, text="轮换间隔(秒):").pack(side=tk.LEFT, padx=(15, 0))
         self.rotate_interval_var = tk.StringVar(value="5.0")
         tk.Entry(settings_frame, textvariable=self.rotate_interval_var, width=5).pack(side=tk.LEFT, padx=3)
 
-        self.img_status_var = tk.StringVar()
-        self.img_status_var.set("状态: 请框选区域并选择标志图片")
-        self.img_status_label = tk.Label(self.tab2, textvariable=self.img_status_var, fg="gray", font=("Arial", 10))
-        self.img_status_label.pack(pady=5)
-
-        # --- 实时图像切割预览 (新增) ---
-        self.preview_frame = tk.LabelFrame(self.tab2, text="实时图像切割预览 (排查 OCR 范围用)")
-        self.preview_frame.pack(pady=2, fill=tk.X, padx=2)
+        # --- 实时图像切割预览 ---
+        self.preview_frame = tk.LabelFrame(img_section, text="实时识别预览")
+        self.preview_frame.pack(pady=2, fill=tk.X, padx=10)
         self.preview_labels = []
         for i in range(6):
-            lbl = tk.Label(self.preview_frame, text=f"空闲{i+1}", bg="#333333", fg="white", width=10, height=4)
-            lbl.pack(side=tk.LEFT, padx=3, pady=2)
+            lbl = tk.Label(self.preview_frame, text=f"空闲{i+1}", bg="#333333", fg="white", width=8, height=3)
+            lbl.pack(side=tk.LEFT, padx=3, pady=2, expand=True)
             self.preview_labels.append(lbl)
-        self.current_tk_images = [] # 防止图片被垃圾回收导致白板
+        self.current_tk_images = []
 
-        img_frame_btns = tk.Frame(self.tab2)
-        img_frame_btns.pack(pady=2)
+        img_frame_btns = tk.Frame(img_section)
+        img_frame_btns.pack(pady=(5, 0))
 
         self.img_btn_start = tk.Button(img_frame_btns, text="▶ 开始识别", width=12, bg="#d4edda", command=self.start_img_rec)
-        self.img_btn_start.pack(side=tk.LEFT, padx=2)
+        self.img_btn_start.pack(side=tk.LEFT, padx=5)
 
         self.img_btn_stop = tk.Button(img_frame_btns, text="⏹ 停止", width=12, state=tk.DISABLED, bg="#f8d7da", command=self.stop_img_rec)
-        self.img_btn_stop.pack(side=tk.LEFT, padx=2)
+        self.img_btn_stop.pack(side=tk.LEFT, padx=5)
+
+        self.img_status_var = tk.StringVar()
+        self.img_status_var.set("状态: 请框选区域并选择标志图片")
+        self.img_status_label = tk.Label(img_section, textvariable=self.img_status_var, fg="gray", font=("Arial", 9))
+        self.img_status_label.pack(pady=5)
         
         # --- 全局快捷键提示 ---
-        hotkey_tips_frame = tk.LabelFrame(self.tab2, text="全局快捷键 (任意界面有效)")
-        hotkey_tips_frame.pack(pady=2, fill=tk.X, padx=2)
-        tk.Label(hotkey_tips_frame, text="F8: 开始识别  |  F9: 停止识别  |  F10: 暂停/开始轮换", fg="#b8860b", font=("Arial", 10, "bold")).pack(pady=2)
+        hotkey_tips_frame = tk.LabelFrame(self.main_container, text="全局快捷键 (任意界面有效)", font=("Arial", 10, "bold"))
+        hotkey_tips_frame.pack(pady=(5, 0), fill=tk.X)
+        tk.Label(hotkey_tips_frame, text="F8: 开始识别 | F9: 停止识别 | F10: 暂停/开始轮换", fg="#b8860b", font=("Arial", 9, "bold")).pack(pady=2)
         
         self.is_rotation_paused = False
         keyboard.add_hotkey('F8', lambda: self.root.after(0, self.start_img_rec))
