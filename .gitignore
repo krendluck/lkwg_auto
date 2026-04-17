@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+env.bak/
+venv.bak/
+
+# IDE / Editor folders
+.vscode/
+.idea/
+*.swp
+*.suo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Project specific
+# 忽略调试产生的截图文件
+debug_*.png
+# 如果你有不需要上传的其他测试图片，可以配置在这里，但不忽略状态标志 status.png
+# *.png
+# !status.png
+
+todo.md

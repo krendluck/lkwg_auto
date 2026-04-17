@@ -8,23 +8,96 @@ import ctypes
 import random
 from PIL import Image, ImageTk
 
-# Windows API 鼠标事件常量
-MOUSEEVENTF_LEFTDOWN = 0x0002
-MOUSEEVENTF_LEFTUP = 0x0004
+# --- Windows API 硬件级输入常量与结构 (应对游戏屏蔽) ---
+import ctypes
+from ctypes import wintypes
 
-def mouse_left_press():
-    """使用 Windows 原生 API 模拟鼠标左键按下"""
-    ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+SendInput = ctypes.windll.user32.SendInput
 
-def mouse_left_release():
-    """使用 Windows 原生 API 模拟鼠标左键松开"""
-    ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+PUL = ctypes.POINTER(ctypes.c_ulong)
+class KeyBdInput(ctypes.Structure):
+    _fields_ = [("wVk", wintypes.WORD),
+                ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", PUL)]
+
+class HardwareInput(ctypes.Structure):
+    _fields_ = [("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD)]
+
+class MouseInput(ctypes.Structure):
+    _fields_ = [("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", PUL)]
+
+class Input_I(ctypes.Union):
+    _fields_ = [("ki", KeyBdInput),
+                ("mi", MouseInput),
+                ("hi", HardwareInput)]
+
+class Input(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD),
+                ("ii", Input_I)]
+
+# Scancodes 映射 (游戏通常需要读取底层扫描码而不是虚拟键码)
+SCANCODES = {'1': 0x02, '2': 0x03, '3': 0x04, '4': 0x05, '5': 0x06, '6': 0x07, 'esc': 0x01}
+
+def hardware_mouse_press():
+    extra = ctypes.c_ulong(0)
+    ii_ = Input_I()
+    ii_.mi = MouseInput(0, 0, 0, 0x0002, 0, ctypes.pointer(extra)) # MOUSEEVENTF_LEFTDOWN
+    x = Input(0, ii_)
+    SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+
+def hardware_mouse_release():
+    extra = ctypes.c_ulong(0)
+    ii_ = Input_I()
+    ii_.mi = MouseInput(0, 0, 0, 0x0004, 0, ctypes.pointer(extra)) # MOUSEEVENTF_LEFTUP
+    x = Input(0, ii_)
+    SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+
+def hardware_mouse_move(x, y):
+    sw = ctypes.windll.user32.GetSystemMetrics(0)
+    sh = ctypes.windll.user32.GetSystemMetrics(1)
+    dx = int(x * 65535 / sw)
+    dy = int(y * 65535 / sh)
+    extra = ctypes.c_ulong(0)
+    ii_ = Input_I()
+    ii_.mi = MouseInput(dx, dy, 0, 0x8001, 0, ctypes.pointer(extra)) # MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE
+    in_obj = Input(0, ii_)
+    SendInput(1, ctypes.pointer(in_obj), ctypes.sizeof(in_obj))
+
+def hardware_key_press(char):
+    if str(char) not in SCANCODES:
+        return
+    scancode = SCANCODES[str(char)]
+    extra = ctypes.c_ulong(0)
+    ii_ = Input_I()
+    ii_.ki = KeyBdInput(0, scancode, 0x0008, 0, ctypes.pointer(extra)) # KEYEVENTF_SCANCODE
+    x = Input(1, ii_)
+    SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+
+def hardware_key_release(char):
+    if str(char) not in SCANCODES:
+        return
+    scancode = SCANCODES[str(char)]
+    extra = ctypes.c_ulong(0)
+    ii_ = Input_I()
+    ii_.ki = KeyBdInput(0, scancode, 0x0008 | 0x0002, 0, ctypes.pointer(extra))
+    x = Input(1, ii_)
+    SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+
 
 class MouseMapperApp:
     def __init__(self, root):
         self.root = root
         self.root.title("自动化助手 (按键映射 & 图像识别)")
-        self.root.geometry("620x570")  # 扩大高度容纳时间设置
+        self.root.geometry("620x660")  # 扩大高度容纳时间设置与多行战斗设置
         self.root.resizable(False, False)
         
         # --- 共享事件/状态 ---
@@ -49,7 +122,7 @@ class MouseMapperApp:
         hk_frame = tk.Frame(kb_section)
         hk_frame.pack(pady=5)
         
-        self.hotkey_var = tk.StringVar(value="alt+x")
+        self.hotkey_var = tk.StringVar(value="c")
         self.hotkey_entry = tk.Entry(hk_frame, textvariable=self.hotkey_var, font=("Arial", 10), width=18, justify="center")
         self.hotkey_entry.pack(side=tk.LEFT, padx=5)
 
@@ -111,17 +184,55 @@ class MouseMapperApp:
         tk.Entry(img_pick_frame, textvariable=self.img_path_var, width=20, state="readonly").pack(side=tk.LEFT, padx=5)
         tk.Button(img_pick_frame, text="浏览...", command=self.browse_image).pack(side=tk.LEFT)
 
+        # --- 战斗标志识别控件 ---
+        combat_pick_frame = tk.Frame(img_section)
+        combat_pick_frame.pack(pady=(0, 5))
+        tk.Label(combat_pick_frame, text="战斗判定(选填):").pack(side=tk.LEFT)
+        
+        self.combat_img_path_var = tk.StringVar(value="esc.png")
+        self.combat_image_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "esc.png")
+        if not os.path.exists(self.combat_image_path):
+             self.combat_image_path = ""
+             self.combat_img_path_var.set("")
+
+        tk.Entry(combat_pick_frame, textvariable=self.combat_img_path_var, width=12, state="readonly").pack(side=tk.LEFT, padx=5)
+        tk.Button(combat_pick_frame, text="浏览...", command=self.browse_combat_image).pack(side=tk.LEFT)
+
+        tk.Label(combat_pick_frame, text="监控坐标:").pack(side=tk.LEFT, padx=(5, 0))
+        self.combat_roi_var = tk.StringVar(value="1223,869 34x20")
+        tk.Entry(combat_pick_frame, textvariable=self.combat_roi_var, width=15).pack(side=tk.LEFT, padx=5)
+
+        # --- 战斗操作控件 ---
+        combat_act_frame = tk.Frame(img_section)
+        combat_act_frame.pack(pady=(0, 5))
+        tk.Label(combat_act_frame, text="连带点击(选填):").pack(side=tk.LEFT)
+        
+        self.combat_act_img_var = tk.StringVar(value="yes.png")
+        self.combat_act_img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yes.png")
+        if not os.path.exists(self.combat_act_img_path):
+             self.combat_act_img_path = ""
+             self.combat_act_img_var.set("")
+
+        tk.Entry(combat_act_frame, textvariable=self.combat_act_img_var, width=12, state="readonly").pack(side=tk.LEFT, padx=5)
+        tk.Button(combat_act_frame, text="浏览...", command=self.browse_combat_act_image).pack(side=tk.LEFT)
+
+        tk.Label(combat_act_frame, text="点击坐标:").pack(side=tk.LEFT, padx=(5, 0))
+        self.combat_act_roi_var = tk.StringVar(value="919,756 39x34")
+        tk.Entry(combat_act_frame, textvariable=self.combat_act_roi_var, width=15).pack(side=tk.LEFT, padx=5)
+
         # --- 识别检测参数设置 ---
         settings_frame = tk.Frame(img_section)
         settings_frame.pack(pady=5)
         
         tk.Label(settings_frame, text="常规间隔(秒):").pack(side=tk.LEFT)
         self.detect_interval_var = tk.StringVar(value="0.5")
-        tk.Entry(settings_frame, textvariable=self.detect_interval_var, width=5).pack(side=tk.LEFT, padx=3)
+        self.detect_entry = tk.Entry(settings_frame, textvariable=self.detect_interval_var, width=5)
+        self.detect_entry.pack(side=tk.LEFT, padx=3)
         
         tk.Label(settings_frame, text="轮换间隔(秒):").pack(side=tk.LEFT, padx=(15, 0))
         self.rotate_interval_var = tk.StringVar(value="5.0")
-        tk.Entry(settings_frame, textvariable=self.rotate_interval_var, width=5).pack(side=tk.LEFT, padx=3)
+        self.rotate_entry = tk.Entry(settings_frame, textvariable=self.rotate_interval_var, width=5)
+        self.rotate_entry.pack(side=tk.LEFT, padx=3)
 
         # --- 实时图像切割预览 ---
         self.preview_frame = tk.LabelFrame(img_section, text="实时识别预览")
@@ -148,11 +259,13 @@ class MouseMapperApp:
         self.img_status_label.pack(pady=5)
         
         # --- 全局快捷键提示 ---
-        hotkey_tips_frame = tk.LabelFrame(self.main_container, text="全局快捷键 (任意界面有效)", font=("Arial", 10, "bold"))
+        hotkey_tips_frame = tk.LabelFrame(self.main_container, text="全局快捷键 (任意界面有效)", font=("Arial", 8, "bold"))
         hotkey_tips_frame.pack(pady=(5, 0), fill=tk.X)
-        tk.Label(hotkey_tips_frame, text="F8: 开始识别 | F9: 停止识别 | F10: 暂停/开始轮换", fg="#b8860b", font=("Arial", 9, "bold")).pack(pady=2)
+        tk.Label(hotkey_tips_frame, text="F6: 启动按键映射 | F7: 停止按键映射\nF8: 开始识别 | F9: 停止识别 | F10: 暂停/恢复轮换", fg="#b8860b", font=("Arial", 9, "bold")).pack(pady=2)
         
         self.is_rotation_paused = False
+        keyboard.add_hotkey('F6', lambda: self.root.after(0, self.start_kb_mapping))
+        keyboard.add_hotkey('F7', lambda: self.root.after(0, self.stop_kb_mapping))
         keyboard.add_hotkey('F8', lambda: self.root.after(0, self.start_img_rec))
         keyboard.add_hotkey('F9', lambda: self.root.after(0, self.stop_img_rec))
         keyboard.add_hotkey('F10', lambda: self.root.after(0, self.toggle_rotation_pause))
@@ -212,7 +325,7 @@ class MouseMapperApp:
         self.kb_running = False
         if self.is_mouse_held:
             try:
-                mouse_left_release()
+                hardware_mouse_release()
             except Exception as e:
                 print(f"释放鼠标失败: {e}")
             self.is_mouse_held = False
@@ -230,12 +343,12 @@ class MouseMapperApp:
                 if keyboard.is_pressed(hotkey):
                     if not self.is_mouse_held:
                         time.sleep(random.uniform(0.01, 0.04))
-                        mouse_left_press()
+                        hardware_mouse_press()
                         self.is_mouse_held = True
                 else:
                     if self.is_mouse_held:
                         time.sleep(random.uniform(0.01, 0.04))
-                        mouse_left_release()
+                        hardware_mouse_release()
                         self.is_mouse_held = False
                 time.sleep(0.01)
         except ValueError:
@@ -345,6 +458,28 @@ class MouseMapperApp:
             self.img_status_var.set("成功加载图片，等待启动。")
             self.img_status_label.config(fg="blue")
 
+    def browse_combat_image(self):
+        file_path = filedialog.askopenfilename(
+            title="选择战斗状态判定图片 (如 esc.png)",
+            filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")]
+        )
+        if file_path:
+            self.combat_image_path = file_path
+            self.combat_img_path_var.set(os.path.basename(file_path))
+            self.img_status_var.set("成功加载战斗判定图片。")
+            self.img_status_label.config(fg="blue")
+
+    def browse_combat_act_image(self):
+        file_path = filedialog.askopenfilename(
+            title="选择战斗中要点击的连带图片 (如 yes.png)",
+            filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")]
+        )
+        if file_path:
+            self.combat_act_img_path = file_path
+            self.combat_act_img_var.set(os.path.basename(file_path))
+            self.img_status_var.set("成功加载连带点击目标图片。")
+            self.img_status_label.config(fg="blue")
+
     def start_img_rec(self):
         if getattr(self, "img_running", False):
             return
@@ -361,6 +496,8 @@ class MouseMapperApp:
         self.img_running = True
         self.img_btn_start.config(state=tk.DISABLED)
         self.img_btn_stop.config(state=tk.NORMAL)
+        self.detect_entry.config(state=tk.DISABLED)
+        self.rotate_entry.config(state=tk.DISABLED)
         self.img_status_var.set(f"状态: 正在 [{target_window}] 中寻找图片...")
         self.img_status_label.config(fg="green")
         
@@ -371,6 +508,8 @@ class MouseMapperApp:
         self.img_running = False
         self.img_btn_start.config(state=tk.NORMAL)
         self.img_btn_stop.config(state=tk.DISABLED)
+        self.detect_entry.config(state=tk.NORMAL)
+        self.rotate_entry.config(state=tk.NORMAL)
         self.img_status_var.set("状态: 图像识别已停止")
         self.img_status_label.config(fg="red")
 
@@ -438,6 +577,7 @@ class MouseMapperApp:
 
     def img_rec_loop(self, target_window):
         import pyautogui  # 延迟导入，防止程序无库直接崩溃
+        import re         # 确保正则表达式库可用
         
         cycle_idx = 2  # 当所有精灵均已放出时，用于循环切换的内部状态 (2~6)
 
@@ -447,6 +587,107 @@ class MouseMapperApp:
                 win_rect = self.get_window_rect(target_window)
                 
                 if win_rect and win_rect[2] > 0 and win_rect[3] > 0:
+                    # 读取当前UI设置的轮询间隔 (提前读取以便跳跃逻辑使用)
+                    try:
+                        detect_interval = max(0.1, float(self.detect_interval_var.get()))
+                        rotate_interval = max(0.5, float(self.rotate_interval_var.get()))
+                    except ValueError:
+                        detect_interval = 0.5
+                        rotate_interval = 5.0
+                        
+                    # 内部判定函数：当前是否处于战斗中
+                    def check_is_in_combat():
+                        if getattr(self, "combat_image_path", ""):
+                            try:
+                                cm = re.search(r'(\d+),(\d+)\s+(\d+)x(\d+)', self.combat_roi_var.get())
+                                if cm:
+                                    cx, cy, cw, ch = map(int, cm.groups())
+                                    c_rect = (win_rect[0] + cx, win_rect[1] + cy, cw, ch)
+                                    
+                                    # 每次都截一张当前搜索战斗标志的图保存下来，方便您查看排错
+                                    try:
+                                        c_debug_img = pyautogui.screenshot(region=c_rect)
+                                        c_debug_img.save("debug_combat_scan_region.png")
+                                    except Exception as img_err:
+                                        print(f"📸 [DEBUG] 战斗检测区截图失败: {img_err}")
+                                    
+                                    loc_res = list(pyautogui.locateAllOnScreen(self.combat_image_path, region=c_rect, confidence=0.7))
+                                    if loc_res:
+                                        return True
+                            except Exception as e:
+                                err_str = str(e).lower()
+                                if "could not locate" not in err_str and "not found" not in err_str and "imagenotfound" not in err_str:
+                                    print(f"❌ [DEBUG] check_is_in_combat 异常: {e}")
+                        return False
+
+                    # 0. 战斗判定：如果在战斗中，则跳过本次找精灵动作
+                    in_combat = check_is_in_combat()
+                    
+                    if in_combat:
+                        self.root.after(0, lambda: self.img_status_var.set("状态: [战斗中] 尝试按ESC并执行连带点击..."))
+                        print("⚔️ 发现对应区块战斗标志(esc.png)，判断为进入战斗。按下主键盘 ESC 并连带点击...")
+                        
+                        # 1. 硬件按下 ESC
+                        hardware_key_press('esc')
+                        time.sleep(0.05)
+                        hardware_key_release('esc')
+                        time.sleep(0.3) # 等弹窗出来
+                        
+                        clicked_target = False
+                        try:
+                            # 获取点击区域的坐标与长宽
+                            am = re.search(r'(\d+),(\d+)\s+(\d+)x(\d+)', self.combat_act_roi_var.get())
+                            if am:
+                                ax, ay, aw, ah = map(int, am.groups())
+                                a_rect = (win_rect[0] + ax, win_rect[1] + ay, aw, ah)
+                                
+                                # 【调试：保存即将进行比对的大区域图】
+                                try:
+                                    region_debug_img = pyautogui.screenshot(region=a_rect)
+                                    region_debug_img.save("debug_combat_click_region.png")
+                                    print(f"📸 [DEBUG] 战斗点击搜索区域已截图保存为 debug_combat_click_region.png")
+                                except Exception as e:
+                                    print(f"📸 [DEBUG] 战斗点击搜索区域截图失败: {e}")
+
+                                # 【方式 A】如果配置了连带图片且真实存在，先找图，找准了再精准点
+                                if getattr(self, "combat_act_img_path", "") and os.path.exists(self.combat_act_img_path):
+                                    act_marks = list(pyautogui.locateAllOnScreen(self.combat_act_img_path, region=a_rect, confidence=0.7))
+                                    if act_marks:
+                                        t_center = pyautogui.center(act_marks[0])
+                                        hardware_mouse_move(int(t_center.x), int(t_center.y))
+                                        time.sleep(0.05)
+                                        hardware_mouse_press()
+                                        time.sleep(0.05)
+                                        hardware_mouse_release()
+                                        clicked_target = True
+                                        print(f"✅ [战斗操作] 通过图像识别点击 {int(t_center.x)}, {int(t_center.y)}")
+                                        time.sleep(0.2) # 点之后小停顿
+
+                                # 【方式 B】如果没图片或是设置图片没找到，采取基于范围中心的“盲点”进行兜底
+                                if not clicked_target:
+                                    tx = win_rect[0] + ax + aw // 2
+                                    ty = win_rect[1] + ay + ah // 2
+                                    hardware_mouse_move(tx, ty)
+                                    time.sleep(0.05)
+                                    hardware_mouse_press()
+                                    time.sleep(0.05)
+                                    hardware_mouse_release()
+                                    print(f"✅ [战斗操作] 启动盲点进行兜底 {tx}, {ty}")
+                                    time.sleep(0.2) 
+                        except Exception as ce:
+                            import re
+                            err_str = str(ce)
+                            # 如果是因为没找到图(confidence负数等)，属于正常不兜底/或者图片太暗的情况
+                            if "could not locate" in err_str.lower() or "not found" in err_str.lower() or "imagenotfound" in err_str.lower():
+                                conf_match = re.search(r'confidence\s*=\s*([-0-9.]+)', err_str)
+                                conf = conf_match.group(1) if conf_match else "unknown"
+                                print(f"⚠️ [战斗操作] 未能在目标区域找到连带点击图像 (当前匹配度 {conf})")
+                            else:
+                                print(f"❌ 战斗点击严重异常: {ce}")
+
+                        time.sleep(detect_interval)
+                        continue
+
                     # 1. 锁定窗口跟随：把我们之前保存的相对框选位置，贴合到窗口最新的实时位置上
                     if self.roi_rect:
                         # 如果没有绑定过特定窗口，我们取之前保存的绝对位置
@@ -462,15 +703,7 @@ class MouseMapperApp:
                     else:
                         rect = win_rect
 
-                    # 【调试0】：保存整个搜索大区域的截图 (已调好，暂时注释)
-                    # try:
-                    #     region_img = pyautogui.screenshot(region=rect)
-                    #     region_img.save("debug_0_search_region.png")
-                    # except Exception:
-                    #     pass
-
                     # 识别所有的“放出标志”（可能会有多个），加上 list() 避免生成器枯竭
-                    # 将容错率从 0.8 适当下调到 0.7，防止有的图标背景稍微变动一点点就识别不到
                     try:
                         marks = list(pyautogui.locateAllOnScreen(self.target_image_path, region=rect, confidence=0.7))
                     except Exception as loc_err:
@@ -597,22 +830,14 @@ class MouseMapperApp:
                     # 洛克王国队伍通常是6只精灵。我们要找未放出的精灵，即在 2~6 范围内但不在 released_nums 中的数字
                     unreleased_nums = [n for n in range(2, 7) if n not in released_nums]
                                 
-                    # 读取当前UI设置的轮询间隔
-                    try:
-                        detect_interval = max(0.1, float(self.detect_interval_var.get()))
-                        rotate_interval = max(0.5, float(self.rotate_interval_var.get()))
-                    except ValueError:
-                        detect_interval = 0.5
-                        rotate_interval = 5.0
-                                
                     if unreleased_nums:
                         min_num = min(unreleased_nums)
                         print(f"✅ [操作执行] 找到最小未放出序号: {min_num}，将按下主键盘数字按键 '{min_num}'")
-                        # 改用底层 keyboard 库并增加短暂延时(加上随机噪声)，确保游戏能识别到主键盘的数字键
+                        
                         time.sleep(random.uniform(0.02, 0.1)) # 按键前随机延迟
-                        keyboard.press(str(min_num))
+                        hardware_key_press(str(min_num))
                         time.sleep(random.uniform(0.03, 0.08)) # 按下保持随机时长
-                        keyboard.release(str(min_num))
+                        hardware_key_release(str(min_num))
                         
                         time.sleep(detect_interval + random.uniform(0.01, 0.05)) # 正常检测状态下的防频繁休眠 
                     else:
@@ -622,22 +847,23 @@ class MouseMapperApp:
                         else:
                             print(f"✅ [操作执行] 2~6号全部精灵均已放出！进入间隔 {rotate_interval}s 的轮流切换循环，当前按下 '{cycle_idx}'")
                             time.sleep(random.uniform(0.02, 0.1)) # 按键前随机延迟
-                            keyboard.press(str(cycle_idx))
+                            hardware_key_press(str(cycle_idx))
                             time.sleep(random.uniform(0.03, 0.08))
-                            keyboard.release(str(cycle_idx))
+                            hardware_key_release(str(cycle_idx))
                             
                             # 自增 cycle_idx，如果大于6就从头回到2
                             cycle_idx += 1
                             if cycle_idx > 6:
                                 cycle_idx = 2
                             
-                        # 进行 rotate_interval 延时，切分成每块 0.5s 的小休眠，避免阻塞 UI 线程中途停止迟钝
+                        # 进行 rotate_interval 延时
+                        # 仅做正常的等待，不在此处高频循环判断战斗
                         wait_chunks = int(rotate_interval / 0.5)
                         for _ in range(wait_chunks):
-                            if getattr(self, "img_running", False):
-                                time.sleep(0.5)
-                            else:
+                            if not getattr(self, "img_running", False):
                                 break
+                            time.sleep(0.5)
+                            
                         # 补充剩余的不足 0.5 的尾数时间
                         remainder = rotate_interval % 0.5
                         if remainder > 0 and getattr(self, "img_running", False):
@@ -672,7 +898,26 @@ class MouseMapperApp:
         self.stop_kb_mapping()
         self.root.destroy()
 
+import sys
+
+def is_admin():
+    """检查当前是否具有管理员权限"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
 if __name__ == "__main__":
+    # 如果没有管理员权限，则请求 UAC 弹窗并以管理员身份重新运行
+    if sys.platform == 'win32' and not is_admin():
+        script = os.path.abspath(sys.argv[0])
+        params = ' '.join([f'"{script}"'] + sys.argv[1:])
+        try:
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+        except Exception as e:
+            print(f"获取管理员权限失败: {e}")
+        sys.exit()
+
     root = tk.Tk()
     app = MouseMapperApp(root)
     root.mainloop()
